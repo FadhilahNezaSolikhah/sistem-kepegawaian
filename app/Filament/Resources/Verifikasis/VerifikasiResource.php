@@ -2,163 +2,99 @@
 
 namespace App\Filament\Resources\Verifikasis;
 
-use App\Filament\Resources\Verifikasis\Pages\CreateVerifikasi;
-use App\Filament\Resources\Verifikasis\Pages\EditVerifikasi;
+use App\Filament\Resources\Presensis\PresensiResource;
 use App\Filament\Resources\Verifikasis\Pages\ListVerifikasis;
-use App\Models\Verifikasi;
-use BackedEnum;
-use Filament\Actions\BulkActionGroup;
-use Filament\Actions\DeleteAction;
-use Filament\Actions\DeleteBulkAction;
-use Filament\Actions\EditAction;
-use Filament\Forms\Components\DateTimePicker;
-use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Textarea;
-use Filament\Forms\Components\TextInput;
+use App\Models\Presensi;
+use Filament\Actions\ViewAction;
 use Filament\Resources\Resource;
-use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
-use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Auth;
 
+/**
+ * Menu "Antrian Verifikasi" — view atas model Presensi yang difilter ke
+ * status_verifikasi = pending. Verifikasi V3 inline; resource ini hanya
+ * mempercepat alur supervisor (lihat antrian + aksi Setujui/Tolak cepat).
+ * Kolom & aksi di-reuse dari PresensiResource agar satu sumber kebenaran.
+ */
 class VerifikasiResource extends Resource
 {
-    protected static ?string $model = Verifikasi::class;
+    protected static ?string $model = Presensi::class;
 
-    protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedClipboardDocumentList;
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-shield-check';
 
     protected static ?string $navigationLabel = 'Verifikasi';
 
+    protected static ?string $modelLabel = 'Verifikasi Presensi';
+
+    protected static ?string $pluralModelLabel = 'Verifikasi Presensi';
+
     protected static string|\UnitEnum|null $navigationGroup = 'Operasional';
 
-    protected static ?int $navigationSort = 6;
+    protected static ?int $navigationSort = 4;
 
     public static function canViewAny(): bool
     {
-        return Auth::user()?->role === 'supervisor';
+        // Verifikasi = tugas SUPERVISOR saja (RBAC: admin ❌). Lihat docs/v3/04-hak-akses-rbac.md.
+        return (bool) (Auth::user()?->isSupervisor());
     }
 
     public static function canCreate(): bool
     {
-        return Auth::user()?->role === 'supervisor';
+        return false;
     }
 
-    public static function canEdit(Model $record): bool
+    /**
+     * Antrian: presensi dengan CHECK-IN nyata (jam_masuk ada) yang masih pending.
+     * Alpa & Izin tidak punya jam_masuk → bukan objek verifikasi, tidak masuk antrian.
+     */
+    public static function getEloquentQuery(): Builder
     {
-        return Auth::user()?->role === 'supervisor';
+        return parent::getEloquentQuery()
+            ->where('status_verifikasi', 'pending')
+            ->whereNotNull('jam_masuk');
     }
 
-    public static function canDelete(Model $record): bool
+    public static function getNavigationBadge(): ?string
     {
-        return Auth::user()?->role === 'supervisor';
+        if (! Auth::user()?->isSupervisor()) {
+            return null;
+        }
+
+        $count = Presensi::where('status_verifikasi', 'pending')->whereNotNull('jam_masuk')->count();
+
+        return $count > 0 ? (string) $count : null;
     }
 
-    public static function canDeleteAny(): bool
+    public static function getNavigationBadgeColor(): ?string
     {
-        return Auth::user()?->role === 'supervisor';
+        return 'warning';
     }
 
-    public static function form(Schema $schema): Schema
+    /** Reuse detail presensi untuk modal View. */
+    public static function infolist(Schema $schema): Schema
     {
-        return $schema
-            ->components([
-                Section::make('Data Verifikasi')
-                    ->columns(2)
-                    ->schema([
-                        Select::make('presensi_id')
-                            ->label('Presensi')
-                            ->relationship('presensi', 'id')
-                            ->getOptionLabelFromRecordUsing(fn ($record) => "Presensi " . ($record->tanggal?->format('d M Y') ?? '') . " - " . ($record->karyawan?->user?->nama ?? 'Unknown'))
-                            ->searchable()
-                            ->preload()
-                            ->required()
-                            ->unique(ignoreRecord: true),
-                        Select::make('supervisor_id')
-                            ->label('Supervisor')
-                            ->searchable()
-                            ->getSearchResultsUsing(fn (string $search) => \App\Models\Supervisor::with('user')
-                                ->when(filled($search), fn ($q) => $q->where(fn ($inner) => $inner
-                                    ->where('nik', 'like', "%{$search}%")
-                                    ->orWhereHas('user', fn ($u) => $u->where('nama', 'like', "%{$search}%"))
-                                ))
-                                ->limit(20)
-                                ->get()
-                                ->mapWithKeys(fn ($s) => [$s->id => "{$s->nik} - " . ($s->user?->nama ?? '-')])
-                                ->all()
-                            )
-                            ->getOptionLabelUsing(fn ($value) => ($s = \App\Models\Supervisor::with('user')->find($value))
-                                ? "{$s->nik} - " . ($s->user?->nama ?? '-')
-                                : $value
-                            )
-                            ->required()
-                            ->default(fn () => \App\Models\Supervisor::where('user_id', Auth::id())->first()?->id)
-                            ->disabled(fn () => Auth::user()?->role === 'supervisor')
-                            ->dehydrated(),
-                        Select::make('status')
-                            ->options([
-                                'pending' => 'Pending',
-                                'disetujui' => 'Disetujui',
-                                'ditolak' => 'Ditolak',
-                            ])
-                            ->required(),
-                        DateTimePicker::make('tgl_verifikasi')
-                            ->label('Tanggal Verifikasi')
-                            ->seconds(false),
-                        Textarea::make('catatan')
-                            ->columnSpanFull(),
-                        TextInput::make('alasan_tolak')
-                            ->maxLength(255),
-                    ]),
-            ]);
+        return PresensiResource::infolist($schema);
     }
 
     public static function table(Table $table): Table
     {
         return $table
-            ->columns([
-                TextColumn::make('presensi.karyawan.user.nama')
-                    ->label('Karyawan')
-                    ->searchable()
-                    ->sortable(),
-                TextColumn::make('supervisor.user.nama')
-                    ->label('Supervisor')
-                    ->searchable(),
-                TextColumn::make('status')
-                    ->badge(),
-                TextColumn::make('tgl_verifikasi')
-                    ->dateTime('d M Y H:i')
-                    ->sortable(),
-                TextColumn::make('alasan_tolak')
-                    ->limit(40),
-            ])
-            ->filters([])
+            ->columns(PresensiResource::presensiColumns())
+            ->defaultSort('tanggal', 'asc')
             ->recordActions([
-                EditAction::make()
-                    ->visible(fn () => Auth::user()?->role === 'supervisor'),
-                DeleteAction::make()
-                    ->visible(fn () => Auth::user()?->role === 'supervisor'),
+                ViewAction::make(),
+                ...PresensiResource::verifikasiRecordActions(),
             ])
-            ->toolbarActions([
-                BulkActionGroup::make([
-                    DeleteBulkAction::make(),
-                ])->visible(fn () => Auth::user()?->role === 'supervisor'),
-            ]);
-    }
-
-    public static function getRelations(): array
-    {
-        return [];
+            ->emptyStateHeading('Tidak ada presensi menunggu verifikasi')
+            ->emptyStateDescription('Semua presensi sudah diverifikasi.');
     }
 
     public static function getPages(): array
     {
         return [
             'index' => ListVerifikasis::route('/'),
-            'create' => CreateVerifikasi::route('/create'),
-            'edit' => EditVerifikasi::route('/{record}/edit'),
         ];
     }
 }

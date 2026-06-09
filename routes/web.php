@@ -13,7 +13,7 @@ Route::get('/', function () {
         return redirect('/login');
     }
 
-    return match (Auth::user()?->role) {
+    return match (Auth::user()?->role?->value) {
         'karyawan' => redirect()->route('karyawan.beranda'),
         'admin' => redirect('/admin'),
         'supervisor' => redirect('/supervisor'),
@@ -37,7 +37,7 @@ $adminPanel = Filament::getPanel('admin', isStrict: false);
 
 if ($adminPanel) {
     Route::get('/login', AppLogin::class)
-        ->middleware($adminPanel->getMiddleware())
+        ->middleware(array_merge($adminPanel->getMiddleware(), [\App\Http\Middleware\NoStoreResponse::class]))
         ->name('login');
 } else {
     Route::get('/login', fn () => abort(503, 'Admin panel is not available.'))->name('login');

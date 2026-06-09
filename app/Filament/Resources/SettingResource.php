@@ -25,22 +25,23 @@ class SettingResource extends Resource
 
     public static function canViewAny(): bool
     {
-        return Auth::user()?->role === 'admin';
+        // Supervisor boleh MELIHAT pengaturan (read-only); ubah/hapus tetap admin-only.
+        return (Auth::user()?->isAdmin() || Auth::user()?->isSupervisor());
     }
 
     public static function canCreate(): bool
     {
-        return Auth::user()?->role === 'admin';
+        return Auth::user()?->isAdmin();
     }
 
     public static function canEdit(Model $record): bool
     {
-        return Auth::user()?->role === 'admin';
+        return Auth::user()?->isAdmin();
     }
 
     public static function canDelete(Model $record): bool
     {
-        return Auth::user()?->role === 'admin';
+        return Auth::user()?->isAdmin();
     }
 
     public static function form(Schema $schema): Schema
@@ -82,7 +83,7 @@ class SettingResource extends Resource
             ])
             ->recordActions([
                 EditAction::make()
-                    ->visible(fn () => Auth::user()?->role === 'admin')
+                    ->visible(fn () => Auth::user()?->isAdmin())
                     ->after(fn () => Setting::clearCache()),
             ])
             ->bulkActions([

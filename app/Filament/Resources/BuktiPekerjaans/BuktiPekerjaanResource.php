@@ -5,7 +5,9 @@ namespace App\Filament\Resources\BuktiPekerjaans;
 use App\Filament\Resources\BuktiPekerjaans\Pages\CreateBuktiPekerjaan;
 use App\Filament\Resources\BuktiPekerjaans\Pages\EditBuktiPekerjaan;
 use App\Filament\Resources\BuktiPekerjaans\Pages\ListBuktiPekerjaans;
+use App\Filament\Resources\BuktiPekerjaans\Pages\ViewBuktiPekerjaan;
 use App\Filament\Resources\BuktiPekerjaans\Schemas\BuktiPekerjaanForm;
+use App\Filament\Resources\BuktiPekerjaans\Schemas\BuktiPekerjaanInfolist;
 use App\Filament\Resources\BuktiPekerjaans\Tables\BuktiPekerjaansTable;
 use App\Models\BuktiPekerjaan;
 use BackedEnum;
@@ -31,32 +33,46 @@ class BuktiPekerjaanResource extends Resource
 
     public static function canViewAny(): bool
     {
-        return Auth::user()?->role === 'admin';
+        return Auth::user()?->isAdmin();
     }
 
     public static function canCreate(): bool
     {
-        return Auth::user()?->role === 'admin';
+        return Auth::user()?->isAdmin();
     }
 
     public static function canEdit(\Illuminate\Database\Eloquent\Model $record): bool
     {
-        return Auth::user()?->role === 'admin';
+        return Auth::user()?->isAdmin();
     }
 
     public static function canDelete(\Illuminate\Database\Eloquent\Model $record): bool
     {
-        return Auth::user()?->role === 'admin';
+        return Auth::user()?->isAdmin();
     }
 
     public static function canDeleteAny(): bool
     {
-        return Auth::user()?->role === 'admin';
+        return Auth::user()?->isAdmin();
     }
 
     public static function form(Schema $schema): Schema
     {
         return BuktiPekerjaanForm::configure($schema);
+    }
+
+    public static function infolist(Schema $schema): Schema
+    {
+        return BuktiPekerjaanInfolist::configure($schema);
+    }
+
+    /**
+     * Judul record (breadcrumb/aksi) — hindari menampilkan "1" (id);
+     * pakai nama lokasi tugas.
+     */
+    public static function getRecordTitle(?\Illuminate\Database\Eloquent\Model $record): ?string
+    {
+        return $record?->detailPekerjaan?->nama_lokasi ?? 'Bukti Pekerjaan';
     }
 
     public static function table(Table $table): Table
@@ -76,6 +92,7 @@ class BuktiPekerjaanResource extends Resource
         return [
             'index' => ListBuktiPekerjaans::route('/'),
             'create' => CreateBuktiPekerjaan::route('/create'),
+            'view' => ViewBuktiPekerjaan::route('/{record}'),
             'edit' => EditBuktiPekerjaan::route('/{record}/edit'),
         ];
     }

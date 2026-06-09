@@ -10,11 +10,16 @@ class ViewDetailPekerjaan extends ViewRecord
 {
     protected static string $resource = DetailPekerjaanResource::class;
 
+    public function getTitle(): string
+    {
+        return 'Detail Pekerjaan — ' . ($this->record->nama_lokasi ?? ('#' . $this->record->id));
+    }
+
     protected function getHeaderActions(): array
     {
         return [
             EditAction::make()
-                ->visible(fn () => \Illuminate\Support\Facades\Auth::user()?->role === 'admin'),
+                ->visible(fn () => \Illuminate\Support\Facades\Auth::user()?->isAdmin()),
         ];
     }
 }

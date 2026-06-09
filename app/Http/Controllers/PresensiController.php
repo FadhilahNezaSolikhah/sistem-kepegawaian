@@ -3,8 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\DetailPekerjaan;
-use App\Models\Jadwal;
-use App\Models\Karyawan;
+use App\Models\JadwalPekerjaan;
 use App\Models\Presensi;
 use App\Models\Setting;
 use Carbon\Carbon;
@@ -22,7 +21,7 @@ class PresensiController extends Controller
         $request->validate([
             'latitude' => 'required|numeric',
             'longitude' => 'required|numeric',
-            'foto_masuk' => 'nullable|image|max:10240',
+            'foto_masuk' => 'nullable|image', // ukuran sengaja tidak dibatasi
             'foto_masuk_base64' => 'nullable|string',
         ]);
 
@@ -34,12 +33,11 @@ class PresensiController extends Controller
         }
 
         $user = Auth::user();
-        $karyawan = Karyawan::where('user_id', $user->id)->firstOrFail();
 
         $today = Carbon::now()->toDateString();
 
         // Cek jadwal hari ini (kalau hari libur, presensi ditolak)
-        $jadwal = Jadwal::getJadwalHarian($karyawan->id, $today);
+        $jadwal = JadwalPekerjaan::getJadwalHarian($user->id, $today);
         if ($jadwal && $jadwal->isHariLibur()) {
             return response()->json([
                 'success' => false,
@@ -48,8 +46,8 @@ class PresensiController extends Controller
         }
 
         // Cek sudah check-in hari ini
-        $existingPresensi = Presensi::where('karyawan_id', $karyawan->id)
-            ->where('tanggal', $today)
+        $existingPresensi = Presensi::where('user_id', $user->id)
+            ->whereDate('tanggal', $today)
             ->first();
 
         if ($existingPresensi && $existingPresensi->jam_masuk) {
@@ -68,7 +66,6 @@ class PresensiController extends Controller
         $radius = Setting::get('kantor_radius', 500);
 
         $distance = $this->calculateDistance($userLat, $userLon, $kantorLat, $kantorLng);
-        $statusValid = 'valid';
         if ($distance > $radius) {
             return response()->json([
                 'success' => false,
@@ -112,7 +109,6 @@ class PresensiController extends Controller
             'latitude_masuk' => $request->latitude,
             'longitude_masuk' => $request->longitude,
             'status_presensi' => $statusPresensi,
-            'status_valid' => $statusValid,
             'menit_terlambat' => $menitTerlambat,
             'potongan_terlambat' => $potonganTerlambat,
         ];
@@ -124,7 +120,7 @@ class PresensiController extends Controller
             $presensi = $existingPresensi;
         } else {
             $presensi = Presensi::create([
-                'karyawan_id' => $karyawan->id,
+                'user_id' => $user->id,
                 'tanggal' => $today,
             ] + $payload);
         }
@@ -143,11 +139,10 @@ class PresensiController extends Controller
     public function checkOut(Request $request): JsonResponse
     {
         $user = Auth::user();
-        $karyawan = Karyawan::where('user_id', $user->id)->firstOrFail();
 
         $today = Carbon::now()->toDateString();
-        $presensi = Presensi::where('karyawan_id', $karyawan->id)
-            ->where('tanggal', $today)
+        $presensi = Presensi::where('user_id', $user->id)
+            ->whereDate('tanggal', $today)
             ->firstOrFail();
 
         if (!$presensi->jam_masuk) {
@@ -199,66 +194,74 @@ class PresensiController extends Controller
     {
         $request->validate([
             'detail_pekerjaan_id' => 'required|exists:tb_detail_pekerjaan,id',
-            'foto_before' => 'nullable|image|max:5120',
-            'foto_after' => 'nullable|image|max:5120',
-            'foto_before_base64' => 'nullable|string',
-            'foto_after_base64' => 'nullable|string',
+            'foto' => 'nullable|array|max:20',
+            'foto.*' => 'image',            // ukuran sengaja tidak dibatasi
+            'foto_base64' => 'nullable|array|max:20',
+            'foto_base64.*' => 'string',
             'keterangan' => 'nullable|string',
         ]);
 
-        if ((!$request->hasFile('foto_before') && !$request->filled('foto_before_base64')) ||
-            (!$request->hasFile('foto_after') && !$request->filled('foto_after_base64'))) {
+        $user = Auth::user();
+
+        // Pastikan tugas ini milik user yang login
+        $detailPekerjaan = DetailPekerjaan::where('id', $request->detail_pekerjaan_id)
+            ->where('user_id', $user->id)
+            ->firstOrFail();
+
+        // Kumpulkan path dari file upload (multiple) + base64 (kamera in-app)
+        $paths = [];
+
+        foreach ((array) $request->file('foto', []) as $file) {
+            $paths[] = $file->store('bukti_pekerjaan', 'public');
+        }
+
+        foreach ((array) $request->input('foto_base64', []) as $b64) {
+            if (! is_string($b64) || trim($b64) === '') {
+                continue;
+            }
+            $parts = explode(';base64,', $b64);
+            $decoded = base64_decode($parts[1] ?? $parts[0]);
+            if ($decoded === false) {
+                continue;
+            }
+            $fileName = 'bukti_pekerjaan/' . uniqid('', true) . '.jpg';
+            \Illuminate\Support\Facades\Storage::disk('public')->put($fileName, $decoded);
+            $paths[] = $fileName;
+        }
+
+        if (empty($paths)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Kedua foto (Before & After) wajib diunggah',
+                'message' => 'Minimal unggah 1 foto bukti.',
             ], 422);
         }
 
-        $user = Auth::user();
-        $karyawan = Karyawan::where('user_id', $user->id)->firstOrFail();
-
-        // Validasi bahwa detail pekerjaan ini memang milik karyawan ini
-        $detailPekerjaan = DetailPekerjaan::where('id', $request->detail_pekerjaan_id)
-            ->where('karyawan_id', $karyawan->id)
-            ->firstOrFail();
-
-        // Handle foto upload
-        $fotoBeforePath = null;
-        if ($request->hasFile('foto_before')) {
-            $fotoBeforePath = $request->file('foto_before')->store('bukti_pekerjaan/before', 'public');
-        } elseif ($request->filled('foto_before_base64')) {
-            $imageParts = explode(";base64,", $request->foto_before_base64);
-            $imageBase64 = base64_decode($imageParts[1] ?? $imageParts[0]);
-            $fileName = 'bukti_pekerjaan/before/' . uniqid() . '.jpg';
-            \Illuminate\Support\Facades\Storage::disk('public')->put($fileName, $imageBase64);
-            $fotoBeforePath = $fileName;
-        }
-
-        $fotoAfterPath = null;
-        if ($request->hasFile('foto_after')) {
-            $fotoAfterPath = $request->file('foto_after')->store('bukti_pekerjaan/after', 'public');
-        } elseif ($request->filled('foto_after_base64')) {
-            $imageParts = explode(";base64,", $request->foto_after_base64);
-            $imageBase64 = base64_decode($imageParts[1] ?? $imageParts[0]);
-            $fileName = 'bukti_pekerjaan/after/' . uniqid() . '.jpg';
-            \Illuminate\Support\Facades\Storage::disk('public')->put($fileName, $imageBase64);
-            $fotoAfterPath = $fileName;
-        }
-
-        $bukti = \App\Models\BuktiPekerjaan::create([
+        // 1 record bukti per tugas; foto baru di-append ke galeri (maks 20 total).
+        $bukti = \App\Models\BuktiPekerjaan::firstOrNew([
             'detail_pekerjaan_id' => $detailPekerjaan->id,
-            'karyawan_id' => $karyawan->id,
-            'foto_before' => $fotoBeforePath,
-            'foto_after' => $fotoAfterPath,
-            'keterangan' => $request->keterangan,
-            'status' => 'pending',
-            'uploaded_at' => Carbon::now(),
+            'user_id' => $user->id,
         ]);
+
+        $existing = $bukti->foto ?? [];
+
+        if (count($existing) + count($paths) > 20) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Maksimal 20 foto per tugas (saat ini sudah ' . count($existing) . ').',
+            ], 422);
+        }
+
+        $bukti->foto = array_values(array_merge($existing, $paths));
+        $bukti->keterangan = $request->keterangan ?? $bukti->keterangan;
+        $bukti->status = 'pending';
+        $bukti->uploaded_at = Carbon::now();
+        $bukti->save();
 
         return response()->json([
             'success' => true,
             'data' => $bukti,
-            'message' => 'Bukti pekerjaan berhasil diupload',
+            'jumlah_foto' => count($bukti->foto),
+            'message' => 'Bukti pekerjaan berhasil diupload (' . count($bukti->foto) . ' foto).',
         ]);
     }
 
@@ -306,9 +309,8 @@ class PresensiController extends Controller
     public function viewSchedule(Request $request): JsonResponse
     {
         $user = Auth::user();
-        $karyawan = Karyawan::where('user_id', $user->id)->firstOrFail();
 
-        $schedules = Jadwal::where('karyawan_id', $karyawan->id)
+        $schedules = JadwalPekerjaan::where('user_id', $user->id)
             ->where('tanggal_kerja', '>=', Carbon::now()->startOfDay())
             ->orderBy('tanggal_kerja', 'asc')
             ->get();
@@ -331,10 +333,8 @@ class PresensiController extends Controller
         ]);
 
         $user = Auth::user();
-        $karyawan = Karyawan::where('user_id', $user->id)->firstOrFail();
 
-        $query = Presensi::where('karyawan_id', $karyawan->id)
-            ->with(['verifikasi']);
+        $query = Presensi::where('user_id', $user->id);
 
         if ($request->bulan) {
             $query->whereYear('tanggal', substr($request->bulan, 0, 4))
@@ -367,7 +367,7 @@ class PresensiController extends Controller
     {
         $today = Carbon::now()->toDateString();
         $presensis = Presensi::where('tanggal', $today)
-            ->with(['karyawan', 'verifikasi'])
+            ->with(['user'])
             ->get();
 
         $summary = [
@@ -375,7 +375,7 @@ class PresensiController extends Controller
             'terlambat' => $presensis->where('status_presensi', 'terlambat')->count(),
             'tidak_hadir' => $presensis->where('status_presensi', 'tidak_hadir')->count(),
             'izin' => $presensis->where('status_presensi', 'izin')->count(),
-            'menunggu_verifikasi' => $presensis->whereNull('verifikasi')->count(),
+            'menunggu_verifikasi' => $presensis->where('status_verifikasi', 'pending')->count(),
         ];
 
         return response()->json([
@@ -395,14 +395,13 @@ class PresensiController extends Controller
         $request->validate([
             'presensi_id' => 'required|exists:tb_presensi,id',
             'tipe' => 'required|in:masuk,keluar',
-            'foto' => 'required|image|max:5120',
+            'foto' => 'required|image', // ukuran sengaja tidak dibatasi
         ]);
 
         $user = Auth::user();
-        $karyawan = Karyawan::where('user_id', $user->id)->firstOrFail();
 
         $presensi = Presensi::where('id', $request->presensi_id)
-            ->where('karyawan_id', $karyawan->id)
+            ->where('user_id', $user->id)
             ->firstOrFail();
 
         $fotoPath = $request->file('foto')->store(

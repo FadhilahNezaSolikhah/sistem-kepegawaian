@@ -3,18 +3,15 @@
 namespace App\Filament\Resources\Verifikasis\Pages;
 
 use App\Filament\Resources\Verifikasis\VerifikasiResource;
-use Filament\Actions\CreateAction;
 use Filament\Resources\Pages\ListRecords;
 
 class ListVerifikasis extends ListRecords
 {
     protected static string $resource = VerifikasiResource::class;
 
+    /** Tidak ada tombol "Create" — antrian verifikasi bukan untuk membuat presensi. */
     protected function getHeaderActions(): array
     {
-        return [
-            CreateAction::make()
-                ->visible(fn () => in_array(\Illuminate\Support\Facades\Auth::user()?->role, ['admin', 'supervisor'], true)),
-        ];
+        return [];
     }
 }

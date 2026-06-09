@@ -13,34 +13,46 @@ class BuktiPekerjaanForm
                 \Filament\Forms\Components\Select::make('detail_pekerjaan_id')
                     ->label('Detail Pekerjaan')
                     ->relationship('detailPekerjaan', 'nama_lokasi')
-                    ->getOptionLabelFromRecordUsing(fn ($record) => "{$record->jadwal?->tanggal_kerja?->format('d M Y')} - {$record->nama_lokasi} ({$record->karyawan?->user?->nama})")
+                    ->getOptionLabelFromRecordUsing(fn ($record) => "{$record->jadwal?->tanggal_kerja?->format('d M Y')} - {$record->nama_lokasi} ({$record->user?->nama})")
                     ->searchable()
                     ->preload()
                     ->required(),
-                \Filament\Forms\Components\Select::make('karyawan_id')
+                \Filament\Forms\Components\Select::make('user_id')
                     ->label('Karyawan')
                     ->searchable()
-                    ->getSearchResultsUsing(fn (string $search) => \App\Models\Karyawan::with('user')
+                    ->getSearchResultsUsing(fn (string $search) => \App\Models\User::query()
+                        ->where('role', 'karyawan')
                         ->when(filled($search), fn ($q) => $q->where(fn ($inner) => $inner
                             ->where('nik', 'like', "%{$search}%")
-                            ->orWhereHas('user', fn ($u) => $u->where('nama', 'like', "%{$search}%"))
+                            ->orWhere('nama', 'like', "%{$search}%")
                         ))
                         ->limit(50)
                         ->get()
-                        ->mapWithKeys(fn ($k) => [$k->id => "{$k->nik} - " . ($k->user?->nama ?? '-')])
+                        ->mapWithKeys(fn ($u) => [$u->id => "{$u->nik} - {$u->nama}"])
                         ->all()
                     )
-                    ->getOptionLabelUsing(fn ($value) => ($k = \App\Models\Karyawan::with('user')->find($value))
-                        ? "{$k->nik} - " . ($k->user?->nama ?? '-')
+                    ->getOptionLabelUsing(fn ($value) => ($u = \App\Models\User::find($value))
+                        ? "{$u->nik} - {$u->nama}"
                         : $value
                     )
                     ->required(),
+                \Filament\Forms\Components\FileUpload::make('foto')
+                    ->label('Foto Bukti (galeri, bisa banyak)')
+                    ->multiple()
+                    ->image()
+                    ->reorderable()
+                    ->panelLayout('grid')
+                    ->directory('bukti_pekerjaan')
+                    ->disk('public')
+                    ->columnSpanFull(),
                 \Filament\Forms\Components\FileUpload::make('foto_before')
+                    ->label('Foto Before (legacy)')
                     ->image()
-                    ->required(),
+                    ->disk('public'),
                 \Filament\Forms\Components\FileUpload::make('foto_after')
+                    ->label('Foto After (legacy)')
                     ->image()
-                    ->required(),
+                    ->disk('public'),
                 \Filament\Forms\Components\Textarea::make('keterangan')
                     ->maxLength(65535)
                     ->columnSpanFull(),
